@@ -6,6 +6,8 @@ class SERLObsWrapper(gym.ObservationWrapper):
     """
     This observation wrapper treat the observation space as a dictionary
     of a flattened state space and the images.
+    
+    tips: obs封装, 将除图像外的所有state展平为一个向量。
     """
 
     def __init__(self, env, proprio_keys=None):

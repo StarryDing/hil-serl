@@ -19,26 +19,38 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
         include_next_actions: Optional[bool] = False,
         include_grasp_penalty: Optional[bool] = False,
     ):
+        # 拿到需要存储的图像 "键 "
         self.pixel_keys = pixel_keys
 
+        # 创建一个深拷贝的 observation_space 副本，以便后续修改
+        # tips: observation_space 是 gym 中的状态空间
         observation_space = copy.deepcopy(observation_space)
         self._num_stack = None
         for pixel_key in self.pixel_keys:
+            # 遍历 pixel_keys 中的每个键，获取对应的像素空间
             pixel_obs_space = observation_space.spaces[pixel_key]
             if self._num_stack is None:
+                # 看堆叠参数是否设置了，没设置的话就拿 pixel_obs_space 的第一个维度作为堆叠参数
+                # tips: 这里的堆叠维度一定需要存在，在代码中是通过 ChunkingWrapper 给 obs 增加堆叠维度的
                 self._num_stack = pixel_obs_space.shape[0]
             else:
+                # 如果已经设置了堆叠维度，需要校验一下是否与 pixel_obs_space 的第一个维度一致
                 assert self._num_stack == pixel_obs_space.shape[0]
+            # 没鸟用的成员变量，存储的是图像通道数
             self._unstacked_dim_size = pixel_obs_space.shape[-1]
+            # 获取图像obs的最大值和最小值(每个像素坐标都会有一个最大最小, 在这里默认所有的都是与第一个索引一直的最大最小)
             low = pixel_obs_space.low[0]
             high = pixel_obs_space.high[0]
+            # 对每一个 pixel_key 都创建一个 Box 空间，这个空间存储每个像素的极值
             unstacked_pixel_obs_space = Box(
                 low=low, high=high, dtype=pixel_obs_space.dtype
             )
             observation_space.spaces[pixel_key] = unstacked_pixel_obs_space
 
+        # 建立 next observation space
         next_observation_space_dict = copy.deepcopy(observation_space.spaces)
         for pixel_key in self.pixel_keys:
+            # 为了节省存储空间，在next obs中删除图像部分
             next_observation_space_dict.pop(pixel_key)
         next_observation_space = gym.spaces.Dict(next_observation_space_dict)
 
@@ -62,6 +74,7 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
                 self._is_correct_index[self._insert_index] = False
                 super().insert(element)
 
+        # copy数据，python的copy是浅拷贝，所以需要继续copy内部数据
         data_dict = data_dict.copy()
         data_dict["observations"] = data_dict["observations"].copy()
         data_dict["next_observations"] = data_dict["next_observations"].copy()

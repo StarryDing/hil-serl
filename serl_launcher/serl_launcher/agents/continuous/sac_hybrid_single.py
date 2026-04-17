@@ -366,8 +366,8 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         """
         batch_size = batch["rewards"].shape[0]
         chex.assert_tree_shape_prefix(batch, (batch_size,))
-        chex.assert_shape(batch["actions"], (batch_size, 7))
-
+        chex.assert_shape(batch["actions"], (batch_size, self.config["action_dim"]))
+ 
         if self.config["image_keys"][0] not in batch["next_observations"]:
             batch = _unpack(batch)
         rng, aug_rng = jax.random.split(self.state.rng)
@@ -528,6 +528,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
                 image_keys=image_keys,
                 reward_bias=reward_bias,
                 augmentation_function=augmentation_function,
+                action_dim=actions.shape[-1],
                 **kwargs,
             ),
         )

@@ -28,6 +28,7 @@ def _insert_recursively(
         dataset_dict[insert_index] = data_dict
     elif isinstance(dataset_dict, dict):
         for k in dataset_dict.keys():
+            # 在存储数据时，replay buffer和一个experience的结构一定是一致的，所以可以递归存储
             _insert_recursively(dataset_dict[k], data_dict[k], insert_index)
     else:
         raise TypeError()

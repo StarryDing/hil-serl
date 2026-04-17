@@ -11,7 +11,7 @@ from flax.training import checkpoints
 import os
 import copy
 import pickle as pkl
-from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
+from gymnasium.wrappers import RecordEpisodeStatistics
 from natsort import natsorted
 
 from serl_launcher.agents.continuous.sac import SACAgent
@@ -69,6 +69,8 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng):
     This is the actor loop, which runs when "--actor" is set to True.
     """
     if FLAGS.eval_checkpoint_step:
+        import imageio
+
         success_counter = 0
         time_list = []
 
@@ -79,10 +81,16 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng):
         )
         agent = agent.replace(state=ckpt)
 
+        video_dir = os.path.join(FLAGS.checkpoint_path, "eval_videos")
+        if FLAGS.save_video:
+            os.makedirs(video_dir, exist_ok=True)
+
         for episode in range(FLAGS.eval_n_trajs):
             obs, _ = env.reset()
             done = False
             start_time = time.time()
+            frames = []
+
             while not done:
                 sampling_rng, key = jax.random.split(sampling_rng)
                 actions = agent.sample_actions(
@@ -93,6 +101,22 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng):
                 actions = np.asarray(jax.device_get(actions))
 
                 next_obs, reward, done, truncated, info = env.step(actions)
+
+                if FLAGS.save_video:
+                    # Get the unwrapped env to call render directly
+                    base_env = env.unwrapped
+                    rendered = base_env.render()
+                    if len(frames) == 0:  # Debug: print shape of first frame
+                        print(f"[DEBUG] render type: {type(rendered)}, len: {len(rendered) if isinstance(rendered, list) else 'N/A'}")
+                        if isinstance(rendered, list) and len(rendered) > 0:
+                            print(f"[DEBUG] frame shape: {rendered[0].shape}")
+                    if rendered is not None:
+                        if isinstance(rendered, list):
+                            frame = np.concatenate(rendered, axis=1)
+                        else:
+                            frame = rendered
+                        frames.append(frame)
+
                 obs = next_obs
 
                 if done:
@@ -105,15 +129,25 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng):
                     print(reward)
                     print(f"{success_counter}/{episode + 1}")
 
+                    if FLAGS.save_video and frames:
+                        status = "success" if reward else "fail"
+                        video_path = os.path.join(
+                            video_dir,
+                            f"eval_step{FLAGS.eval_checkpoint_step}_ep{episode}_{status}.mp4"
+                        )
+                        imageio.mimsave(video_path, frames, fps=20)
+                        print(f"Saved video to {video_path}")
+
         print(f"success rate: {success_counter / FLAGS.eval_n_trajs}")
         print(f"average time: {np.mean(time_list)}")
         return  # after done eval, return and exit
     
-    start_step = (
-        int(os.path.basename(natsorted(glob.glob(os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl")))[-1])[12:-4]) + 1
+    buffer_files = (
+        natsorted(glob.glob(os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl")))
         if FLAGS.checkpoint_path and os.path.exists(FLAGS.checkpoint_path)
-        else 0
+        else []
     )
+    start_step = int(os.path.basename(buffer_files[-1])[12:-4]) + 1 if buffer_files else 0
 
     datastore_dict = {
         "actor_env": data_store,
@@ -185,6 +219,7 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng):
                 already_intervened = False
 
             running_return += reward
+            # TODO 存储 experience 时, 需要区分 terminated 和 truncated
             transition = dict(
                 observations=obs,
                 actions=actions,
@@ -246,19 +281,22 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
     """
     The learner loop, which runs when "--learner" is set to True.
     """
-    start_step = (
-        int(os.path.basename(checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path)))[11:])
-        + 1
+    latest_ckpt = (
+        checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path))
         if FLAGS.checkpoint_path and os.path.exists(FLAGS.checkpoint_path)
-        else 0
+        else None
     )
+    start_step = int(os.path.basename(latest_ckpt)[11:]) + 1 if latest_ckpt else 0
     step = start_step
 
     def stats_callback(type: str, payload: dict) -> dict:
         """Callback for when server receives stats request."""
         assert type == "send-stats", f"Invalid request type: {type}"
         if wandb_logger is not None:
-            wandb_logger.log(payload, step=step)
+            try:
+                wandb_logger.log(payload, step=step)
+            except Exception as e:
+                print(f"Warning: failed to log to wandb: {e}")
         return {}  # not expecting a response
 
     # Create server
@@ -350,8 +388,9 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
             and config.checkpoint_period
             and step % config.checkpoint_period == 0
         ):
+            ckpt_state = jax.device_get(agent.state)
             checkpoints.save_checkpoint(
-                os.path.abspath(FLAGS.checkpoint_path), agent.state, step=step, keep=100
+                os.path.abspath(FLAGS.checkpoint_path), ckpt_state, step=step, keep=100
             )
 
 
@@ -377,7 +416,9 @@ def main(_):
 
     rng, sampling_rng = jax.random.split(rng)
     
-    if config.setup_mode == 'single-arm-fixed-gripper' or config.setup_mode == 'dual-arm-fixed-gripper':   
+    if config.setup_mode == 'single-arm-fixed-gripper' \
+    or config.setup_mode == 'dual-arm-fixed-gripper' \
+    or config.setup_mode == 'single-arm-gripper':   
         agent: SACAgent = make_sac_pixel_agent(
             seed=FLAGS.seed,
             sample_obs=env.observation_space.sample(),
@@ -413,20 +454,20 @@ def main(_):
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
     agent = jax.device_put(
-        jax.tree_map(jnp.array, agent), sharding.replicate()
+        jax.tree.map(jnp.array, agent), sharding.replicate()
     )
 
     if FLAGS.checkpoint_path is not None and os.path.exists(FLAGS.checkpoint_path):
-        input("Checkpoint path already exists. Press Enter to resume training.")
-        ckpt = checkpoints.restore_checkpoint(
-            os.path.abspath(FLAGS.checkpoint_path),
-            agent.state,
-        )
-        agent = agent.replace(state=ckpt)
-        ckpt_number = os.path.basename(
-            checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path))
-        )[11:]
-        print_green(f"Loaded previous checkpoint at step {ckpt_number}.")
+        latest_ckpt = checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path))
+        if latest_ckpt is not None:
+            input("Checkpoint path already exists. Press Enter to resume training.")
+            ckpt = checkpoints.restore_checkpoint(
+                os.path.abspath(FLAGS.checkpoint_path),
+                agent.state,
+            )
+            agent = agent.replace(state=ckpt)
+            ckpt_number = os.path.basename(latest_ckpt)[11:]
+            print_green(f"Loaded previous checkpoint at step {ckpt_number}.")
 
     def create_replay_buffer_and_wandb_logger():
         replay_buffer = MemoryEfficientReplayBufferDataStore(
@@ -455,15 +496,18 @@ def main(_):
             include_grasp_penalty=include_grasp_penalty,
         )
 
-        assert FLAGS.demo_path is not None
-        for path in FLAGS.demo_path:
-            with open(path, "rb") as f:
-                transitions = pkl.load(f)
-                for transition in transitions:
-                    if 'infos' in transition and 'grasp_penalty' in transition['infos']:
-                        transition['grasp_penalty'] = transition['infos']['grasp_penalty']
-                    demo_buffer.insert(transition)
-        print_green(f"demo buffer size: {len(demo_buffer)}")
+        if FLAGS.demo_path is not None:
+            for path in FLAGS.demo_path:
+                with open(path, "rb") as f:
+                    transitions = pkl.load(f)
+                    for transition in transitions:
+                        if 'infos' in transition and 'grasp_penalty' in transition['infos']:
+                            transition['grasp_penalty'] = transition['infos']['grasp_penalty']
+                        demo_buffer.insert(transition)
+            print_green(f"demo buffer size: {len(demo_buffer)}")
+        else:
+            print_green("No demo provided, using online data only")
+            demo_buffer = replay_buffer
         print_green(f"online buffer size: {len(replay_buffer)}")
 
         if FLAGS.checkpoint_path is not None and os.path.exists(
