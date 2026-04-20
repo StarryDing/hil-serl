@@ -219,14 +219,14 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng):
                 already_intervened = False
 
             running_return += reward
-            # TODO 存储 experience 时, 需要区分 terminated 和 truncated
+            # 存储 experience 时, 需要区分 terminated 和 truncated
             transition = dict(
                 observations=obs,
                 actions=actions,
                 next_observations=next_obs,
                 rewards=reward,
                 masks=1.0 - done,
-                dones=done,
+                dones=done or truncated,
             )
             if 'grasp_penalty' in info:
                 transition['grasp_penalty']= info['grasp_penalty']

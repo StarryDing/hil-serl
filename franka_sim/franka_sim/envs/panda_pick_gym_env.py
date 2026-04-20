@@ -244,11 +244,11 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         terminated = success  # 只有成功才是自然终止
         truncated = self.time_limit_exceeded()  # 时间限制是截断
         
-        # TODO 注意区分 terminated 和 truncated 的含义
+        # 注意区分 terminated 和 truncated 的含义
         # tips: terminated 是自然终止, truncated 是截断
         #       在 terminated 时, 计算 TD target 时不需要考虑下一个状态的 Q 值
         #       在 truncated 时, 计算 TD target 时需要考虑下一个状态的 Q 值
-        return obs, rew, terminated or truncated, False, {}
+        return obs, rew, terminated, truncated, {}
 
     def render(self):
         rendered_frames = []
