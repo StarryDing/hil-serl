@@ -8,7 +8,7 @@
  * @copyright Copyright (c) 2026
 '''
 
-from typing import Any, Iterable, Optional
+from typing import Iterable, Optional
 
 import flax
 from functools import partial
@@ -23,7 +23,8 @@ from serl_launcher.utils.train_utils import _unpack
 from serl_launcher.common.encoding import EncodingWrapper
 from serl_launcher.networks.consistency_policy import ConsistencyPolicy
 from serl_launcher.networks.mlp import MLP
-from serl_launcher.diffusion.noise_process import sample_sigmas, add_ve_noise
+from serl_launcher.networks.time_embedding import TimeEmbedding
+from serl_launcher.diffusion.noise_process import sample_sigmas, add_ve_noise, make_init_noisy_action_ve
 from serl_launcher.diffusion.schedules import karras_sigmas
 from serl_launcher.diffusion.losses import get_snr, get_ve_weightings
 
@@ -98,12 +99,11 @@ class ConsistencyBCAgent(flax.struct.PyTreeNode):
             - apply_fn 根据 max noises、max steps、observations 计算预测的 clean actions
             - 返回动作
         '''
-        actions = jnp.zeros((1, self.config["action_dim"]), dtype=jnp.float32)
-        sigmas = jnp.ones((1, ), dtype=jnp.float32) * self.config["sigma_schedule"][0]
-        noisy_actions, _ = add_ve_noise(actions, sigmas, seed)
+        noisy_actions, sigmas = make_init_noisy_action_ve(seed, self.config["sigma_schedule"][0], self.config["action_dim"], 1)
+        batched_obs = jax.tree.map(lambda x: x[jnp.newaxis], observations)
         denoised_actions = self.state.apply_fn(
             {"params": self.state.params},
-            observations,
+            batched_obs,
             noisy_actions=noisy_actions,
             sigmas=sigmas,
             train=False,
@@ -117,14 +117,17 @@ class ConsistencyBCAgent(flax.struct.PyTreeNode):
         observations: np.ndarray,
         actions: jnp.ndarray,
         encoder_type: str = "resnet-pretrained",
+        train_encoder: bool = False,
         image_keys: Iterable[str] = ("image",),
         use_proprio: bool = False,
         network_kwargs: dict = {
             "hidden_dims": [256, 256],
         },
+        t_network_kwargs: dict = {
+            "t_dim": 16,
+        },
         augmentation_function: Optional[callable] = None,
         learning_rate: float = 3e-4,
-        sigma_emb_dim: int = 16,
         sigma_min: float = 0.002,
         sigma_max: float = 80.0,
         rho: float = 7.0,
@@ -188,15 +191,16 @@ class ConsistencyBCAgent(flax.struct.PyTreeNode):
         network_kwargs["activate_final"] = True
         networks = {
             "actor": ConsistencyPolicy(
-                encoder_def,
-                MLP(**network_kwargs),
+                encoder=encoder_def,
+                train_encoder=train_encoder,
+                network=MLP(**network_kwargs),
+                t_network=TimeEmbedding(**t_network_kwargs),
                 action_dim=actions.shape[-1],
-                sigma_emb_dim=sigma_emb_dim,
                 sigma_min=sigma_min,
                 sigma_max=sigma_max,
                 rho=rho,
                 sigma_data=sigma_data,
-                max_t=steps,
+                clip_denoised=True,
             )
         }
         model_def = ModuleDict(networks)
@@ -204,9 +208,11 @@ class ConsistencyBCAgent(flax.struct.PyTreeNode):
         tx = optax.adam(learning_rate)
 
         rng, init_sigma_rng = jax.random.split(rng)
-        sigmas = sample_sigmas(init_sigma_rng, karras_sigmas(sigma_min, sigma_max, rho, steps), actions.shape[0])
+        init_sigmas = sample_sigmas(init_sigma_rng, karras_sigmas(sigma_min, sigma_max, rho, steps), 1)
         rng, init_rng = jax.random.split(rng)
-        params = model_def.init(init_rng, actor=[observations, actions, sigmas])["params"]
+        init_observations = jax.tree.map(lambda x: x[jnp.newaxis], observations)
+        init_actions = actions[jnp.newaxis]
+        params = model_def.init(init_rng, actor=[init_observations, init_actions, init_sigmas])["params"]
 
         rng, create_rng = jax.random.split(rng)
         state = JaxRLTrainState.create(

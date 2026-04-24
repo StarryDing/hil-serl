@@ -17,7 +17,7 @@ def rescale_timesteps(sigmas: jnp.ndarray, scale_factor: float = 1000.0 * 0.25) 
     """
     return scale_factor * jnp.log(sigmas + 1e-44)
 
-def sample_sigmas(rng: jnp.Array, sigma_schedule: jnp.ndarray, batch_size: int) -> jnp.ndarray:
+def sample_sigmas(rng: jax.Array, sigma_schedule: jnp.ndarray, batch_size: int) -> jnp.ndarray:
     """
     Samples sigmas from the sigma schedule.
     Args:
@@ -36,7 +36,7 @@ def sample_sigmas(rng: jnp.Array, sigma_schedule: jnp.ndarray, batch_size: int) 
     sigmas = sigma_schedule[indices]
     return sigmas
 
-def add_ve_noise(clean_actions: jnp.ndarray, sigmas: jnp.ndarray, rng: Optional[jnp.Array]) -> jnp.ndarray:
+def add_ve_noise(clean_actions: jnp.ndarray, sigmas: jnp.ndarray, rng: Optional[jax.Array]) -> jnp.ndarray:
     """
     Adds Variance Exploding noise to the actions.
     Args:
@@ -54,7 +54,7 @@ def add_ve_noise(clean_actions: jnp.ndarray, sigmas: jnp.ndarray, rng: Optional[
     sigmas = append_dims(sigmas, clean_actions.ndim)
     return (clean_actions + noise * sigmas), noise
 
-def make_init_noisy_ations_ve(rng, sigma_max, action_dim, batch_size):
+def make_init_noisy_action_ve(rng, sigma_max, action_dim, batch_size):
     """
     Makes initial noise actions for the actions.
     Args:
@@ -66,11 +66,11 @@ def make_init_noisy_ations_ve(rng, sigma_max, action_dim, batch_size):
         The initial noise actions.
     """
     noise = jax.random.normal(rng, shape=(batch_size, action_dim))
-    noisy_actions = noise * sigma_max
     sigmas = jnp.ones((batch_size, )) * sigma_max
+    noisy_actions = noise * sigmas
     return noisy_actions, sigmas
     
-def add_vp_noise(clean_actions: jnp.ndarray, sigmas: jnp.ndarray, rng: Optional[jnp.Array]) -> jnp.ndarray:
+def add_vp_noise(clean_actions: jnp.ndarray, sigmas: jnp.ndarray, rng: Optional[jax.Array]) -> jnp.ndarray:
     """
     Adds Variance Preserving noise to the actions.
     Args:

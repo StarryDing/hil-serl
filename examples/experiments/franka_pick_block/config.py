@@ -25,9 +25,9 @@ class TrainConfig(DefaultTrainingConfig):
         render_mode = "rgb_array" if save_video else "human"
         env = envs.PandaPickCubeGymEnv(
             action_scale=(0.1, 1), 
-            render_mode="rgb_array", 
+            render_mode=render_mode, 
             image_obs=True,
-            time_limit=float("inf"),  # 禁用内部时间限制，由外部 wrapper 控制
+            time_limit=float("inf"),
         )
         env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)

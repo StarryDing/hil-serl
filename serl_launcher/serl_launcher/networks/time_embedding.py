@@ -1,6 +1,9 @@
 import math
 import flax.linen as nn
 import jax.numpy as jnp
+from typing import Callable
+
+from serl_launcher.common.common import default_init
 
 def sinusoidal_embedding(t: jnp.ndarray, dim: int):
     """
@@ -25,12 +28,17 @@ class TimeEmbedding(nn.Module):
         t_dim: The dimension of the time embedding.
     """
     t_dim: int
+    activations: Callable[[jnp.ndarray], jnp.ndarray] | str = nn.swish
 
     @nn.compact
     def __call__(self, t: jnp.ndarray):
+        activations = self.activations
+        if isinstance(activations, str):
+            activations = getattr(nn, activations)
+
         t_sinusoidal = sinusoidal_embedding(t, self.t_dim)
-        t_emb = nn.Dense(self.t_dim * 2)(t_sinusoidal)
-        t_emb = nn.Mish()(t_emb)
-        t_emb = nn.Dense(self.t_dim)(t_emb)
+        t_emb = nn.Dense(self.t_dim * 2, kernel_init=default_init())(t_sinusoidal)
+        t_emb = activations(t_emb)
+        t_emb = nn.Dense(self.t_dim, kernel_init=default_init())(t_emb)
         return t_emb
         

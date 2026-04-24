@@ -12,6 +12,7 @@ from serl_launcher.agents.continuous.bc import BCAgent
 from serl_launcher.agents.continuous.sac import SACAgent
 from serl_launcher.agents.continuous.sac_hybrid_single import SACAgentHybridSingleArm
 from serl_launcher.agents.continuous.sac_hybrid_dual import SACAgentHybridDualArm
+from serl_launcher.agents.continuous.consistency_bc import ConsistencyBCAgent
 from serl_launcher.vision.data_augmentations import batched_random_crop
 
 ##############################################################################
@@ -39,6 +40,32 @@ def make_bc_agent(
             "std_parameterization": "exp",
             "std_min": 1e-5,
             "std_max": 5,
+        },
+        use_proprio=True,
+        encoder_type=encoder_type,
+        image_keys=image_keys,
+        augmentation_function=make_batch_augmentation_func(image_keys),
+    )
+
+def make_consistency_bc_agent(
+    seed,
+    sample_obs,
+    sample_action,
+    image_keys=("image",),
+    encoder_type="resnet-pretrained",
+):
+    return ConsistencyBCAgent.create(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
+        network_kwargs={
+            "activations": nn.tanh,
+            "use_layer_norm": True,
+            "hidden_dims": [256, 256]
+        },
+        t_network_kwargs={
+            "t_dim": 16,
+            "activations": nn.tanh,
         },
         use_proprio=True,
         encoder_type=encoder_type,
