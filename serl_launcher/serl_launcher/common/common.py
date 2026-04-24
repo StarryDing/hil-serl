@@ -113,6 +113,8 @@ class JaxRLTrainState(struct.PyTreeNode):
     opt_states: Any
     rng: PRNGKey
     epsilon: float = 0.0
+    bc_weight: float = 1.0
+    q_weight: float = 1.0
 
     @staticmethod
     def _tx_tree_map(*args, **kwargs):
@@ -223,7 +225,16 @@ class JaxRLTrainState(struct.PyTreeNode):
 
     @classmethod
     def create(
-        cls, *, apply_fn, params, txs, target_params=None, rng=jax.random.PRNGKey(0), epsilon=0.0
+        cls, 
+        *, 
+        apply_fn, 
+        params, 
+        txs, 
+        target_params=None, 
+        rng=jax.random.PRNGKey(0), 
+        epsilon=0.0, 
+        bc_weight=1.0, 
+        q_weight=1.0
     ):
         """
         Initializes a new train state.
@@ -244,4 +255,6 @@ class JaxRLTrainState(struct.PyTreeNode):
             opt_states=cls._tx_tree_map(lambda tx: tx.init(params), txs),
             rng=rng,
             epsilon=epsilon,
+            bc_weight=bc_weight,
+            q_weight=q_weight,
         )

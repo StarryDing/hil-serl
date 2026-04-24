@@ -6,14 +6,12 @@ from serl_launcher.diffusion.preconditioning import append_dims
 
 def rescale_timesteps(sigmas: jnp.ndarray, scale_factor: float = 1000.0 * 0.25) -> jnp.ndarray:
     """
-    Rescales the timesteps to the log space.
-        1.为了将0~80的噪声范围进一步压缩, 避免大范围采样噪声
-        2.为了避免大小噪声翻倍尺度不一致的问题.
-    Args:
-        sigmas: The sigmas.
-        scale_factor: The scale factor.
-    Returns:
-        The rescaled timesteps.
+    将 sigma 重新缩放为连续时间坐标，以便进行正弦嵌入。
+        1. 由于 sigma 跨越多个数量级，因此使用 log(sigma)。
+        2. 在对数空间中，sigma 的乘法变化会转化为加法偏移，
+            这使得在不同噪声水平下的条件数更加平滑。
+        3. 乘以一个缩放因子，使得所得的“时间”量级
+    适合正弦波时间步长嵌入（大致相当于经典扩散算法中使用的 0~1000 时间步长范围）。
     """
     return scale_factor * jnp.log(sigmas + 1e-44)
 
