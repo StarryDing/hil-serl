@@ -113,7 +113,7 @@ class JaxRLTrainState(struct.PyTreeNode):
     opt_states: Any
     rng: PRNGKey
     epsilon: float = 0.0
-    bc_weight: float = 1.0
+    bc_weight: float = 0.0
     q_weight: float = 1.0
 
     @staticmethod
